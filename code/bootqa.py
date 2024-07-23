@@ -11,8 +11,8 @@ from dimod.serialization.format import Formatter
 import argparse
 
 def get_data(data_name):
-    data = pd.read_csv("code/dataset/"+data_name+".csv", dtype={"time": float, "rate": float})
-    data = data.drop(data[data['rate'] == 0].index)
+    data = pd.read_csv("code/dataset/"+data_name+".csv", dtype={"distance": float, "iDiversity": float, "oDiversity": float})
+    #data = data.drop(data[data['rate'] == 0].index)
     return data
 
 def bootstrap_sampling(data, sample_time, sample_size):
@@ -36,24 +36,23 @@ def create_bqm(sample, sample_size,sample_time, data):
     :param data: dataframe
     :return: a bqm of the objective function
     '''
-    dic_time = {}
-    dic_rate = {}
+    dic_distance = {}
+    dic_iDiversity = {}
+    dic_oDiversity = {}
     dic_num = {}
-    time_total = 0
-    rate_total = 0
     for id in sample:
-        dic_time["T"+str(id)] = data["time"].iloc[id]
-        time_total += data["time"].iloc[id]
-        dic_rate["T"+str(id)] = data["rate"].iloc[id]
-        rate_total += data["rate"].iloc[id]
+        dic_distance["T"+str(id)] = data["distance"].iloc[id]
+        dic_iDiversity["T"+str(id)] = data["iDiversity"].iloc[id]
+        dic_oDiversity["T"+str(id)] = data["oDiversity"].iloc[id]
         dic_num["T"+str(id)] = 1
 
-    bqm_time = dimod.BinaryQuadraticModel(dic_time,{}, 0,dimod.Vartype.BINARY)
-    bqm_rate = dimod.BinaryQuadraticModel(dic_rate,{}, 0,dimod.Vartype.BINARY)
+    bqm_distance = dimod.BinaryQuadraticModel(dic_distance,{}, 0,dimod.Vartype.BINARY)
+    bqm_iDiversity = dimod.BinaryQuadraticModel(dic_iDiversity,{}, 0,dimod.Vartype.BINARY)
+    bqm_oDiversity = dimod.BinaryQuadraticModel(dic_oDiversity,{}, 0,dimod.Vartype.BINARY)
     bqm_num = dimod.BinaryQuadraticModel(dic_num,{}, 0,dimod.Vartype.BINARY)
 
-    bqm_time.normalize()
-    bqm = (1/3)*pow((bqm_time-0)/sample_size, 2) + (1/3)*pow((bqm_rate - rate_total)/sample_size, 2) + (1/3)*pow((bqm_num - 0)/sample_size, 2)
+    #bqm_time.normalize()
+    bqm = (1/3)*pow((bqm_distance-0)/sample_size, 2) + (1/3)*pow((bqm_iDiversity - 1)/sample_size, 2) + (1/3)*pow((bqm_oDiversity - 1)/sample_size, 2) + (99)*pow((bqm_num - 1)/sample_size, 2)
 
     return bqm
 
@@ -71,7 +70,7 @@ def run_qpu(sample_list_total, data, sample_time, sample_size, data_name):
     for i in range(len(sample_list_total)):
         obj = create_bqm(sample_list_total[i], sample_size,sample_time, data)
         start = time.time()
-        sampler = EmbeddingComposite(DWaveSampler(token="XXX"))
+        sampler = EmbeddingComposite(DWaveSampler(token="TOKEN-HERE"))
         embedding = time.time()
         sampleset = sampler.sample(obj, num_reads=100)
         Formatter(sorted_by=None).fprint(sampleset)
@@ -91,18 +90,19 @@ def run_qpu(sample_list_total, data, sample_time, sample_size, data_name):
         sample_list = sample_list_total[i]
         selected_list = [int(x) for x in [list(first_sample.keys())[id][1:] for id in range(sample_size) if list(first_sample.values())[id] == 1]]
         selected_num = len(selected_list)
-        selected_time = [data["time"].iloc[selected_list[index]] for index in range(selected_num)]
-        selected_rate = [data["rate"].iloc[selected_list[index]] for index in range(selected_num)]
+        selected_distance = [data["distance"].iloc[selected_list[index]] for index in range(selected_num)]
+        selected_iDiversity = [data["iDiversity"].iloc[selected_list[index]] for index in range(selected_num)]
+        selected_oDiversity = [data["oDiversity"].iloc[selected_list[index]] for index in range(selected_num)]
         fval = first_energy
         embedding = sampleset.info['embedding_context']['embedding']
 
         qubit_num = sum(len(chain) for chain in embedding.values())
 
         if i == 0:
-            head_df = ["sample_list", "selected_list", "selected_num", "selected_time", "selected_rate", "fval", "qubit_num", "spent_time(s)", "embedding_time(s)", "sampling_time(s)"]
+            head_df = ["sample_list", "selected_list", "selected_num", "selected_distance", "selected_iDiversity", "selected_oDiversity","fval", "qubit_num", "spent_time(s)", "embedding_time(s)", "sampling_time(s)"]
             head_df += list(sampleset.info.keys())
             df_log = pd.DataFrame(columns=head_df)
-        values_df = [sample_list, selected_list, selected_num, selected_time, selected_rate, fval, qubit_num, spent_time, embedding_time, sampling_time]
+        values_df = [sample_list, selected_list, selected_num, selected_distance, selected_iDiversity, selected_oDiversity, fval, qubit_num, spent_time, embedding_time, sampling_time]
         values_df += list(sampleset.info.values())
         df_log.loc[len(df_log)] = values_df
         if not os.path.exists("../BootQA/"+data_name+"/size_"+str(sample_size)+"/"+str(repeat)):
@@ -120,35 +120,33 @@ def run_qpu(sample_list_total, data, sample_time, sample_size, data_name):
 
 def gen_dic(data):
     foods = {}
-    for i,x in enumerate(data[["time","rate"]].to_dict(orient="records")):
+    for i,x in enumerate(data[["distance","iDiversity","oDiversity"]].to_dict(orient="records")):
         foods["T{}".format(i)] = x
     return foods
 
 def print_diet(sample,data, data_name, sample_size, repeat, execution_time, max_time):
-    result_df = pd.DataFrame(columns=["index", "time", "rate"])
-    sum_df = pd.DataFrame(columns=["selected_case_num", "total_time", "total_rate", "fval", "execution_time", "max_time"])
+    result_df = pd.DataFrame(columns=["index", "distance", "iDiversity", "oDiversity"])
     foods = gen_dic(data)
-    total_time = 0
-    total_rate = 0
-    time_list = []
-    rate_list = []
+    distance_list = []
+    iDiversity_list = []
+    oDiversity_list = []
     count = 0
     for t in sample.keys():
         if t[0] == 'T' and sample[t] == 1:
-            total_time += foods[t]['time']
-            total_rate += foods[t]['rate']
-            time_item = foods[t]['time']
-            rate_item = foods[t]['rate']
-            time_list.append(time_item)
-            rate_list.append(rate_item)
+            distance_item = foods[t]['distance']
+            iDiversity_item = foods[t]['iDiversity']
+            oDiversity_item = foods[t]['oDiversity']
+            distance_list.append(distance_item)
+            iDiversity_list.append(iDiversity_item)
+            oDiversity_list.append(oDiversity_item)
             count += 1
             result_df.loc[len(result_df)] = [t[1:], time_item, rate_item]
 
-    time_list_n = [time_list[index]/max(data["time"]) for index in range(len(time_list))]
-    fval = (1/3)*pow(sum(time_list_n)/len(data),2) + (1/3)*pow((sum(rate_list)-sum(data["rate"]))/len(data),2)+(1/3)*pow(count/len(data),2)
-    sum_df.loc[len(sum_df)] = [count, total_time, total_rate, fval, execution_time, max_time]
+    #time_list_n = [time_list[index]/max(data["time"]) for index in range(len(time_list))]
+    #fval = (1/3)*pow(sum(time_list_n)/len(data),2) + (1/3)*pow((sum(rate_list)-sum(data["rate"]))/len(data),2)+(1/3)*pow(count/len(data),2)
+    #sum_df.loc[len(sum_df)] = [count, total_time, total_rate, fval, execution_time, max_time]
     result_df.to_csv("../BootQA/"+data_name+"/size_"+str(sample_size)+"/"+str(repeat)+"/result.csv")
-    sum_df.to_csv("../BootQA/" + data_name + "/size_" + str(sample_size) + "/" + str(repeat) + "/sum.csv")
+    #sum_df.to_csv("../BootQA/" + data_name + "/size_" + str(sample_size) + "/" + str(repeat) + "/sum.csv")
 
 def merge(sample_list):
     case_list = {}
@@ -169,23 +167,26 @@ if __name__ == '__main__':
     index = int(index/10)
     repeat = args.r
     data_name = args.dn
+    if data_name == "ss":
+        sample_size_list = [10, 10]
+        sample_time_list = [1, 1]
     if data_name == "gsdtsr":
-        sample_size_list = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160]
-        sample_time_list = [64, 32, 21, 16, 12, 10, 9, 8, 7, 6, 5, 5, 4, 4, 4, 3]
+        sample_size_list = [9, 9]
+        sample_time_list = [1, 1]
     elif data_name == "iofrol":
         sample_size_list = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160]
         sample_time_list = [383, 191, 127, 95, 76, 63, 54, 47, 42, 38, 34, 31, 29, 27, 25, 23]
     elif data_name == "paintcontrol":
         sample_size_list = [10, 20, 30, 40, 50, 60, 70, 80, 89]
         sample_time_list = [20, 9, 6, 4, 3, 3, 2, 2, 1]
-    sample_time = sample_time_list[index]
-    sample_size = sample_size_list[index]
+    sample_time = 1 #sample_time_list[index]
+    sample_size = 10 #sample_size_list[index]
     print("repeat times:"+str(repeat))
     print("sample size",sample_size)
     print("data name",data_name)
     data = get_data(data_name)
-    sample_total_list = bootstrap_sampling(data, sample_time, sample_size)
+    sample_total_list =  [[0,1,2,3,4,5,6,7,8,9]]  #bootstrap_sampling(data, sample_time, sample_size)
+    print("sample total list",sample_total_list)
     sample_first_list, energy_first_list, execution_time, max_time = run_qpu(sample_total_list, data, sample_time, sample_size, data_name)
     merge_sample = merge(sample_first_list)
     print_diet(merge_sample, data, data_name, sample_size, repeat, execution_time, max_time)
-
