@@ -1,5 +1,5 @@
-# Test Case Minimization with Quantum Annealers
-This repository contains the code necessary to reproduce the results of BootQA approach.
+# Test Case Generation with Quantum Annealers
+This repository is a fork of BootQA for test case generation.
 
 # Installation
 Currently the repository only supports Linux distributions and is tested on Ubuntu 20.
